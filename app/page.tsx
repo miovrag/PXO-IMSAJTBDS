@@ -23,7 +23,14 @@ interface PXOSection {
   content: string;
 }
 
-const TOTAL_STEPS = 12;
+interface InProgressSection {
+  id: number;
+  title: string;
+  subtitle: string;
+  content: string;
+}
+
+const TOTAL_STEPS = 13;
 
 const riskColors: Record<RiskLevel, string> = {
   Low: "bg-green-100 text-green-800 border-green-200",
@@ -96,13 +103,17 @@ export default function Home() {
   const [currentStepLabel, setCurrentStepLabel] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState(0);
   const [sections, setSections] = useState<PXOSection[]>([]);
+  const [inProgressSection, setInProgressSection] =
+    useState<InProgressSection | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  const hasResults = sections.length > 0 || summary !== null;
+  const hasResults =
+    sections.length > 0 || summary !== null || inProgressSection !== null;
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -125,17 +136,57 @@ export default function Home() {
     }
   };
 
+  const handleRemoveImage = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleExport = () => {
+    const lines: string[] = [
+      "# PXO Workflow Analysis",
+      "",
+      `**Problem:** ${problemStatement}`,
+      `**User Segment:** ${userSegment}`,
+      `**Metric at Risk:** ${metricAtRisk}`,
+      `**Risk Level:** ${riskLevel}`,
+      "",
+    ];
+
+    if (summary) {
+      lines.push("## Executive Summary", "", summary, "", "---", "");
+    }
+
+    sections.forEach((section) => {
+      lines.push(
+        `## ${String(section.id).padStart(2, "0")}. ${section.title}`,
+        `*${section.subtitle}*`,
+        "",
+        section.content,
+        "",
+        "---",
+        ""
+      );
+    });
+
+    navigator.clipboard.writeText(lines.join("\n"));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const handleSubmit = async () => {
-    if (!image) return;
+    if (!problemStatement || !userSegment || !metricAtRisk) return;
     setLoading(true);
     setError(null);
     setSections([]);
     setSummary(null);
+    setInProgressSection(null);
     setCompletedSteps(0);
     setCurrentStepLabel(null);
 
     const formData = new FormData();
-    formData.append("image", image);
+    if (image) formData.append("image", image);
     formData.append("problemStatement", problemStatement);
     formData.append("userSegment", userSegment);
     formData.append("metricAtRisk", metricAtRisk);
@@ -172,17 +223,30 @@ export default function Home() {
 
           if (data.type === "step_start") {
             setCurrentStepLabel(data.title);
-            if (!scrolledToResults) {
-              scrolledToResults = true;
-              setTimeout(
-                () =>
-                  resultsRef.current?.scrollIntoView({ behavior: "smooth" }),
-                100
-              );
+            if (data.step >= 0 && data.step < 13) {
+              setInProgressSection({
+                id: data.step,
+                title: data.title,
+                subtitle: data.subtitle || "",
+                content: "",
+              });
+              if (!scrolledToResults) {
+                scrolledToResults = true;
+                setTimeout(
+                  () =>
+                    resultsRef.current?.scrollIntoView({ behavior: "smooth" }),
+                  100
+                );
+              }
             }
+          } else if (data.type === "step_chunk") {
+            setInProgressSection((prev) =>
+              prev ? { ...prev, content: prev.content + data.text } : null
+            );
           } else if (data.type === "step_complete") {
             setSections((prev) => [...prev, data.section]);
             setCompletedSteps((prev) => prev + 1);
+            setInProgressSection(null);
           } else if (data.type === "summary_complete") {
             setSummary(data.summary);
           } else if (data.type === "done") {
@@ -197,10 +261,11 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setLoading(false);
       setCurrentStepLabel(null);
+      setInProgressSection(null);
     }
   };
 
-  const isValid = !!image && !!problemStatement && !!userSegment && !!metricAtRisk;
+  const isValid = !!problemStatement && !!userSegment && !!metricAtRisk;
   const progressPercent = (completedSteps / TOTAL_STEPS) * 100;
 
   return (
@@ -215,17 +280,20 @@ export default function Home() {
             PXO Workflow Analyzer
           </h1>
           <p className="text-gray-500 mt-1">
-            Upload a screenshot and define the problem. Get a full PXO analysis.
+            Define the problem. Get a full 13-step PXO analysis.
           </p>
         </div>
 
         {/* Form */}
         <div className="space-y-8">
-          {/* Image Upload */}
+          {/* Image Upload — optional */}
           <div>
-            <Label className="text-sm font-medium text-gray-900 mb-2 block">
-              Screenshot
-            </Label>
+            <div className="flex items-center justify-between mb-2">
+              <Label className="text-sm font-medium text-gray-900">
+                Screenshot
+              </Label>
+              <span className="text-xs text-gray-400">Optional</span>
+            </div>
             <div
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
@@ -239,9 +307,15 @@ export default function Home() {
                     alt="Preview"
                     className="w-full rounded-lg object-contain max-h-64"
                   />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors rounded-lg flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors rounded-lg flex items-center justify-center gap-3">
                     <span className="opacity-0 group-hover:opacity-100 text-white text-sm font-medium bg-black/50 px-3 py-1 rounded-full transition-opacity">
-                      Change image
+                      Change
+                    </span>
+                    <span
+                      onClick={handleRemoveImage}
+                      className="opacity-0 group-hover:opacity-100 text-white text-sm font-medium bg-black/50 px-3 py-1 rounded-full transition-opacity"
+                    >
+                      Remove
                     </span>
                   </div>
                 </div>
@@ -251,7 +325,9 @@ export default function Home() {
                   <p className="text-gray-500 text-sm">
                     Drop screenshot here or click to upload
                   </p>
-                  <p className="text-gray-400 text-xs mt-1">PNG, JPG, WebP</p>
+                  <p className="text-gray-400 text-xs mt-1">
+                    PNG, JPG, WebP — optional but improves analysis depth
+                  </p>
                 </div>
               )}
             </div>
@@ -271,6 +347,7 @@ export default function Home() {
               className="text-sm font-medium text-gray-900 mb-2 block"
             >
               Problem Statement
+              <span className="text-red-400 ml-1">*</span>
             </Label>
             <Textarea
               id="problem"
@@ -289,6 +366,7 @@ export default function Home() {
                 className="text-sm font-medium text-gray-900 mb-2 block"
               >
                 User Segment
+                <span className="text-red-400 ml-1">*</span>
               </Label>
               <Input
                 id="segment"
@@ -303,6 +381,7 @@ export default function Home() {
                 className="text-sm font-medium text-gray-900 mb-2 block"
               >
                 Metric at Risk
+                <span className="text-red-400 ml-1">*</span>
               </Label>
               <Input
                 id="metric"
@@ -315,9 +394,12 @@ export default function Home() {
 
           {/* Hypothesis */}
           <div>
-            <Label className="text-sm font-medium text-gray-900 mb-3 block">
-              Hypothesis
-            </Label>
+            <div className="flex items-center justify-between mb-3">
+              <Label className="text-sm font-medium text-gray-900">
+                Hypothesis
+              </Label>
+              <span className="text-xs text-gray-400">Optional</span>
+            </div>
             <div className="bg-gray-100 rounded-lg p-4 space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm text-gray-600 shrink-0">
@@ -442,29 +524,41 @@ export default function Home() {
               </div>
             )}
 
-            {/* Summary */}
-            {summary && (
-              <div>
-                <div className="flex items-center gap-3 mb-4">
+            {/* Export + header */}
+            {!loading && sections.length > 0 && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
                   <h2 className="text-xl font-bold text-gray-900">Analysis</h2>
                   <Badge variant="outline" className={riskColors[riskLevel]}>
                     {riskLevel} Risk
                   </Badge>
                 </div>
-                <Card className="border-gray-200">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-xs font-mono text-gray-400 uppercase tracking-widest font-normal">
-                      Summary
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-gray-700 leading-relaxed">{summary}</p>
-                  </CardContent>
-                </Card>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExport}
+                  className="text-xs"
+                >
+                  {copied ? "Copied!" : "Copy as Markdown"}
+                </Button>
               </div>
             )}
 
-            {/* Sections */}
+            {/* Summary */}
+            {summary && (
+              <Card className="border-gray-200">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-mono text-gray-400 uppercase tracking-widest font-normal">
+                    Executive Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-gray-700 leading-relaxed">{summary}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Completed sections */}
             {sections.length > 0 && (
               <Accordion type="multiple" className="space-y-2">
                 {sections.map((section) => (
@@ -496,6 +590,39 @@ export default function Home() {
                   </AccordionItem>
                 ))}
               </Accordion>
+            )}
+
+            {/* In-progress section — live streaming */}
+            {inProgressSection && (
+              <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+                <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50">
+                  <span className="text-xs font-mono text-gray-400 w-6 shrink-0">
+                    {String(inProgressSection.id).padStart(2, "0")}
+                  </span>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {inProgressSection.title}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {inProgressSection.subtitle}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {[0, 150, 300].map((delay) => (
+                      <span
+                        key={delay}
+                        className="inline-block w-1 h-1 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: `${delay}ms` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {inProgressSection.content && (
+                  <div className="p-4">
+                    <MarkdownContent text={inProgressSection.content} />
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

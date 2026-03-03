@@ -58,7 +58,7 @@ const PXO_STEPS = [
     id: 4,
     title: "Persona Roles",
     subtitle: "Usage archetypes",
-    focus: `Generate the Persona Roles section for three archetypes. For each:
+    focus: `Generate the Persona Roles section for three archetypes. For each include:
 - Motivation
 - Risk tolerance
 - Cognitive load tolerance
@@ -148,6 +148,21 @@ Format as: Heuristic → Violation → Improvement. Be specific to what you see 
   },
   {
     id: 11,
+    title: "High-Fi Execution",
+    subtitle: "Design system, interactions, microcopy",
+    focus: `Generate the High-Fi Execution section. Translate the validated Low-Fi structure into a detailed high-fidelity execution spec. Include:
+- **Component Inventory**: Specific UI components needed (buttons, inputs, cards, modals, tooltips, etc.) with all required states — default, hover, focus, disabled, error, loading
+- **Interaction Details**: Hover states, click behaviors, focus rings, transition types and triggers
+- **Motion Logic**: What animates, how (duration, easing curve), and why it aids comprehension — be specific
+- **Microcopy**: Every piece of copy written out — labels, placeholders, tooltips, CTA text, error messages, empty state headlines and subtext, success confirmations, loading state copy
+- **Visual Hierarchy**: Specific recommendations for typography scale, spacing rhythm, and color application to communicate priority
+- **Edge Case Rendering**: How each failure mode from section 7 renders visually — what the user literally sees
+- **Responsive Behavior**: How layout and components adapt across breakpoints (mobile, tablet, desktop)
+
+Base this directly on the Low-Fi Specification (section 9) and ensure every Failure Mode (section 7) has a visual treatment.`,
+  },
+  {
+    id: 12,
     title: "Validation Loop",
     subtitle: "Before and after development",
     focus: `Generate the Validation Loop section.
@@ -169,10 +184,14 @@ Make this actionable and specific to the product context.`,
 ];
 
 async function analyzeScreenshot(
-  base64Image: string,
+  base64Image: string | null,
   mediaType: string,
   problemStatement: string
 ): Promise<string> {
+  if (!base64Image) {
+    return "No screenshot provided. Base the analysis entirely on the problem statement, user segment, hypothesis, and other textual inputs provided.";
+  }
+
   const message = await client.messages.create({
     model: "claude-opus-4-6",
     max_tokens: 1500,
@@ -194,7 +213,7 @@ async function analyzeScreenshot(
           },
           {
             type: "text",
-            text: `Analyze this product screenshot in detail. Your description will be used as context for 12 sequential UX analysis steps.
+            text: `Analyze this product screenshot in detail. Your description will be used as context for 13 sequential UX analysis steps.
 
 Describe:
 1. Type of interface (web app, mobile, dashboard, etc.)
@@ -220,7 +239,8 @@ async function runStep(
   step: (typeof PXO_STEPS)[number],
   screenshotDescription: string,
   inputs: Record<string, string>,
-  previousSections: Array<{ title: string; content: string }>
+  previousSections: Array<{ title: string; content: string }>,
+  onChunk: (text: string) => void
 ): Promise<string> {
   const previousContext =
     previousSections.length > 0
@@ -229,15 +249,24 @@ async function runStep(
           .join("\n\n")}`
       : "";
 
-  const hypothesis = `If we improve ${inputs.hypothesisX}, for ${inputs.hypothesisSegment}, then ${inputs.hypothesisMetric} will improve, because ${inputs.hypothesisBehavior}.`;
+  const hasHypothesis =
+    inputs.hypothesisX &&
+    inputs.hypothesisSegment &&
+    inputs.hypothesisMetric &&
+    inputs.hypothesisBehavior;
 
-  const message = await client.messages.create({
+  const hypothesis = hasHypothesis
+    ? `If we improve ${inputs.hypothesisX}, for ${inputs.hypothesisSegment}, then ${inputs.hypothesisMetric} will improve, because ${inputs.hypothesisBehavior}.`
+    : "Hypothesis not fully specified.";
+
+  const response = await client.messages.create({
     model: "claude-opus-4-6",
     max_tokens: 2000,
+    stream: true,
     messages: [
       {
         role: "user",
-        content: `You are a senior product strategist executing a PXO Workflow analysis. This is step ${step.id + 1} of 12.
+        content: `You are a senior product strategist executing a PXO Workflow analysis. This is step ${step.id + 1} of 13.
 
 ## Screenshot Analysis:
 ${screenshotDescription}
@@ -263,7 +292,17 @@ Rules:
     ],
   });
 
-  return (message.content[0] as { type: "text"; text: string }).text;
+  let content = "";
+  for await (const event of response) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      onChunk(event.delta.text);
+      content += event.delta.text;
+    }
+  }
+  return content;
 }
 
 async function generateSummary(
@@ -309,13 +348,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const formData = await req.formData();
-        const imageFile = formData.get("image") as File;
-
-        if (!imageFile) {
-          send({ type: "error", message: "Image is required" });
-          controller.close();
-          return;
-        }
+        const imageFile = formData.get("image") as File | null;
 
         const inputs = {
           problemStatement: (formData.get("problemStatement") as string) || "",
@@ -330,12 +363,22 @@ export async function POST(req: NextRequest) {
           riskLevel: (formData.get("riskLevel") as string) || "Medium",
         };
 
-        const imageBuffer = await imageFile.arrayBuffer();
-        const base64Image = Buffer.from(imageBuffer).toString("base64");
-        const mediaType = imageFile.type || "image/png";
+        let base64Image: string | null = null;
+        let mediaType = "image/png";
+
+        if (imageFile && imageFile.size > 0) {
+          const imageBuffer = await imageFile.arrayBuffer();
+          base64Image = Buffer.from(imageBuffer).toString("base64");
+          mediaType = imageFile.type || "image/png";
+        }
 
         // Pre-step: analyze screenshot
-        send({ type: "step_start", step: -1, title: "Analyzing screenshot..." });
+        send({
+          type: "step_start",
+          step: -1,
+          title: base64Image ? "Analyzing screenshot..." : "Preparing analysis...",
+          subtitle: "",
+        });
         const screenshotDescription = await analyzeScreenshot(
           base64Image,
           mediaType,
@@ -343,26 +386,37 @@ export async function POST(req: NextRequest) {
         );
         send({ type: "screenshot_done" });
 
-        // Run 12 sequential steps
+        // Run 13 sequential steps
         const completedSections: Array<{ title: string; content: string }> = [];
 
         for (const step of PXO_STEPS) {
-          send({ type: "step_start", step: step.id, title: step.title });
+          send({
+            type: "step_start",
+            step: step.id,
+            title: step.title,
+            subtitle: step.subtitle,
+          });
           const content = await runStep(
             step,
             screenshotDescription,
             inputs,
-            completedSections
+            completedSections,
+            (text) => send({ type: "step_chunk", step: step.id, text })
           );
           completedSections.push({ title: step.title, content });
           send({
             type: "step_complete",
-            section: { id: step.id, title: step.title, subtitle: step.subtitle, content },
+            section: {
+              id: step.id,
+              title: step.title,
+              subtitle: step.subtitle,
+              content,
+            },
           });
         }
 
         // Generate summary
-        send({ type: "step_start", step: 12, title: "Writing summary..." });
+        send({ type: "step_start", step: 13, title: "Writing summary...", subtitle: "" });
         const summary = await generateSummary(completedSections, inputs);
         send({ type: "summary_complete", summary });
 
@@ -382,7 +436,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+      Connection: "keep-alive",
     },
   });
 }
