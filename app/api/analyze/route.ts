@@ -60,17 +60,13 @@ const PXO_STEPS = [
     id: 4,
     title: "Persona Roles",
     subtitle: "Usage archetypes",
-    focus: `Generate the Persona Roles section for three archetypes. For each include:
-- Motivation
-- Risk tolerance
-- Cognitive load tolerance
-- UX expectation
+    focus: `Generate the Persona Roles section for three archetypes. For each include only:
+- One-line description
+- Primary motivation
 
 **Naive**: First-time or occasional users
 **Medium**: Regular users with growing familiarity
-**Expert**: Power users who know the system deeply
-
-Ground each persona in what you can infer from the screenshot and problem context.`,
+**Expert**: Power users who know the system deeply`,
   },
   {
     id: 5,
