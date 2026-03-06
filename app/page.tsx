@@ -21,6 +21,7 @@ interface PXOSection {
   title: string;
   subtitle: string;
   content: string;
+  skipped?: boolean;
 }
 
 interface InProgressSection {
@@ -108,6 +109,7 @@ export default function Home() {
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [skippedStepId, setSkippedStepId] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -184,6 +186,7 @@ export default function Home() {
     setInProgressSection(null);
     setCompletedSteps(0);
     setCurrentStepLabel(null);
+    setSkippedStepId(null);
 
     const formData = new FormData();
     if (image) formData.append("image", image);
@@ -240,13 +243,25 @@ export default function Home() {
               }
             }
           } else if (data.type === "step_chunk") {
-            setInProgressSection((prev) =>
-              prev ? { ...prev, content: prev.content + data.text } : null
-            );
+            setSkippedStepId((skipped) => {
+              if (skipped !== data.step) {
+                setInProgressSection((prev) =>
+                  prev ? { ...prev, content: prev.content + data.text } : null
+                );
+              }
+              return skipped;
+            });
           } else if (data.type === "step_complete") {
-            setSections((prev) => [...prev, data.section]);
-            setCompletedSteps((prev) => prev + 1);
-            setInProgressSection(null);
+            setSkippedStepId((skipped) => {
+              const wasSkipped = skipped === data.section.id;
+              setSections((prev) => [
+                ...prev,
+                wasSkipped ? { ...data.section, content: "", skipped: true } : data.section,
+              ]);
+              setCompletedSteps((prev) => prev + 1);
+              setInProgressSection(null);
+              return wasSkipped ? null : skipped;
+            });
           } else if (data.type === "summary_complete") {
             setSummary(data.summary);
           } else if (data.type === "done") {
@@ -572,7 +587,7 @@ export default function Home() {
                         <span className="text-xs font-mono text-gray-400 w-6 shrink-0">
                           {String(section.id).padStart(2, "0")}
                         </span>
-                        <div>
+                        <div className="flex-1">
                           <p className="text-sm font-semibold text-gray-900">
                             {section.title}
                           </p>
@@ -580,6 +595,9 @@ export default function Home() {
                             {section.subtitle}
                           </p>
                         </div>
+                        {section.skipped && (
+                          <span className="text-xs text-gray-400 italic mr-2">Skipped</span>
+                        )}
                       </div>
                     </AccordionTrigger>
                     <AccordionContent className="pb-4 pt-0">
@@ -607,14 +625,23 @@ export default function Home() {
                       {inProgressSection.subtitle}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    {[0, 150, 300].map((delay) => (
-                      <span
-                        key={delay}
-                        className="inline-block w-1 h-1 bg-gray-400 rounded-full animate-bounce"
-                        style={{ animationDelay: `${delay}ms` }}
-                      />
-                    ))}
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      {[0, 150, 300].map((delay) => (
+                        <span
+                          key={delay}
+                          className="inline-block w-1 h-1 bg-gray-400 rounded-full animate-bounce"
+                          style={{ animationDelay: `${delay}ms` }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setSkippedStepId(inProgressSection.id)}
+                      disabled={skippedStepId === inProgressSection.id}
+                      className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-colors"
+                    >
+                      Skip
+                    </button>
                   </div>
                 </div>
                 {inProgressSection.content && (
