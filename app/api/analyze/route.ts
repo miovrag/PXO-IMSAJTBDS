@@ -60,13 +60,8 @@ const PXO_STEPS = [
     id: 4,
     title: "Persona Roles",
     subtitle: "Usage archetypes",
-    focus: `Generate the Persona Roles section for three archetypes. For each include only:
-- One-line description
-- Primary motivation
-
-**Naive**: First-time or occasional users
-**Medium**: Regular users with growing familiarity
-**Expert**: Power users who know the system deeply`,
+    maxTokens: 300,
+    focus: `List three user archetypes in 1-2 sentences each: Naive (first-time), Medium (regular), Expert (power user). Just name and one sentence description. No bullets, no headers.`,
   },
   {
     id: 5,
@@ -259,7 +254,7 @@ async function runStep(
 
   const response = await client.messages.create({
     model: "claude-opus-4-6",
-    max_tokens: 2000,
+    max_tokens: step.maxTokens ?? 2000,
     stream: true,
     messages: [
       {
